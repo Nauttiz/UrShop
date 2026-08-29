@@ -1,0 +1,25 @@
+# Normalise line endings so the repo always stores LF, regardless of who commits
+# from Windows. Without this, core.autocrlf=true rewrites every file on checkout
+# and Git warns on every `git add` — and a Linux CI or container would see a diff
+# on files nobody touched.
+* text=auto eol=lf
+
+# Windows-only scripts genuinely need CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Never touch binaries — line-ending conversion corrupts them.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.pdf binary
+*.zip binary
+
+# Generated file: collapse it in diffs and don't count it in language stats.
+package-lock.json linguist-generated=true -diff

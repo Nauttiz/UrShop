@@ -1,36 +1,66 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# UrShop
 
-## Getting Started
+A multi-tenant e-commerce SaaS: sellers sign up, get their own storefront at
+`/store/{slug}`, and sell digital downloads, physical goods or subscriptions.
 
-First, run the development server:
+## Getting started
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npx prisma migrate deploy      # apply the schema to MySQL
+npx prisma generate
+npm run dev                    # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The dev and start scripts pin port 3000 on purpose. `AUTH_URL`, `NEXTAUTH_URL`
+and `APP_URL` in `.env.local` are absolute, so an app that silently moved to
+3001 would generate auth callbacks and payment redirects pointing at the wrong
+origin. Failing loudly on a busy port beats debugging that later.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Copy `.env.local` and fill in what you need — every variable is documented in
+[docs/COMMERCE.md](docs/COMMERCE.md#environment-variables). With no payment or
+email keys set the app still runs end to end: checkout uses a built-in test
+gateway and emails print to the server log.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Layout
 
-## Learn More
+```
+src/
+  app/
+    (auth)/          login, register
+    (dashboard)/     seller admin: products, orders, customers, coupons, analytics, settings
+    (storefront)/    buyer-facing: catalogue, product, cart, checkout, receipt
+    api/             route handlers
+    pay/mock/        stand-in payment page used when no provider is configured
+  components/
+    dashboard/       seller-side widgets
+    storefront/      buyer-side widgets
+    payments/        payment-provider UI
+    shared/ ui/      cross-cutting and shadcn primitives
+  lib/
+    domain/          cart, pricing, orders, delivery — the business rules
+    payments/        PaymentGateway abstraction + Stripe and mock drivers
+    email/           Mailer abstraction + templates
+    jobs/            DB-backed queue and its handlers
+prisma/              schema and migrations
+docs/                architecture notes
+```
 
-To learn more about Next.js, take a look at the following resources:
+Business rules live in `src/lib/domain` and never import from `app/`. Route
+handlers are thin: they authenticate, validate with a zod schema from
+`src/lib/validations.ts`, call a domain function, and shape the response.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Background worker
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Emails and abandoned-cart reminders run through a queue that needs an external
+timer:
 
-## Deploy on Vercel
+```bash
+curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
+  http://localhost:3000/api/jobs/run
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Documentation
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- [docs/COMMERCE.md](docs/COMMERCE.md) — the purchase pipeline, payment
+  gateways, digital delivery, jobs, email, settings, and known limits.

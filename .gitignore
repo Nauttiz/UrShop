@@ -39,3 +39,19 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/src/generated/prisma
+
+# local env
+.env
+.env.local
+
+# private product files served only through download tokens
+/storage
+
+# AI tooling skills — vendored copies of the same docs for three different
+# editors, reinstallable from skills-lock.json. The lockfile is committed;
+# the 213 generated files are not.
+.claude/skills/
+.windsurf/skills/
+.agents/skills/

@@ -1,0 +1,441 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum Plan {
+  FREE
+  STARTER
+  BUSINESS
+  PREMIUM
+}
+
+enum ProductType {
+  DIGITAL
+  PHYSICAL
+  SUBSCRIPTION
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  FULFILLED
+  REFUNDED
+  CANCELLED
+  FAILED
+}
+
+enum CouponType {
+  PERCENT
+  FIXED
+}
+
+enum CartStatus {
+  ACTIVE
+  CONVERTED
+  ABANDONED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  DONE
+  FAILED
+}
+
+enum EmailStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+// ─── Core tenancy ────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  passwordHash  String
+  plan          Plan      @default(FREE)
+  planExpiresAt DateTime?
+  store         Store?
+  accounts      Account[]
+  sessions      Session[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model Store {
+  id           String  @id @default(cuid())
+  userId       String  @unique
+  user         User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slug         String  @unique
+  customDomain String? @unique
+  name         String
+  description  String? @db.Text
+  logoUrl      String? @db.Text
+
+  // Commerce settings
+  currency     String  @default("USD")
+  contactEmail String?
+  // Stripe Connect account of the seller (platform charges on behalf of it)
+  stripeAccountId String?
+
+  // JSON: { primaryColor, accentColor, fontFamily, layout }
+  themeConfig Json
+  // JSON: { taxRate, freeShippingOver, flatShipping, downloadLimit, downloadExpiryHours, abandonedCartHours }
+  settings    Json?
+
+  products  Product[]
+  orders    Order[]
+  coupons   Coupon[]
+  carts     Cart[]
+  customers Customer[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+// ─── Catalogue ───────────────────────────────────────────────────────────────
+
+model Product {
+  id          String      @id @default(cuid())
+  storeId     String
+  store       Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  slug        String?
+  name        String
+  description String?     @db.Text
+  price       Float
+  // Optional strike-through / sale pricing
+  compareAtPrice Float?
+  currency    String      @default("USD")
+  type        ProductType
+  category    String?
+
+  // Buyer names their own price, floored at minPrice
+  isPayWhatYouWant Boolean @default(false)
+  minPrice         Float?
+
+  // Legacy single-file field, kept for backwards compatibility.
+  // New uploads go into ProductFile.
+  fileUrl   String? @db.Text
+  thumbnail String? @db.Text
+
+  // Digital delivery limits (null = inherit store settings)
+  downloadLimit       Int?
+  downloadExpiryHours Int?
+
+  // Physical
+  stock       Int?
+  weightGrams Int?
+
+  // Subscription
+  billingInterval String? // "month" | "year"
+
+  isPublished Boolean @default(false)
+  sortOrder   Int     @default(0)
+  viewCount   Int     @default(0)
+
+  files      ProductFile[]
+  orderItems OrderItem[]
+  cartItems  CartItem[]
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@unique([storeId, slug])
+  @@index([storeId, isPublished])
+}
+
+model ProductFile {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name      String
+  url       String   @db.Text
+  sizeBytes Int      @default(0)
+  mimeType  String?
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  downloads Download[]
+
+  @@index([productId])
+}
+
+// ─── Buyers ──────────────────────────────────────────────────────────────────
+
+model Customer {
+  id      String @id @default(cuid())
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  email   String
+  name    String?
+
+  totalSpent  Float @default(0)
+  ordersCount Int   @default(0)
+
+  orders    Order[]
+  carts     Cart[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([storeId, email])
+}
+
+// ─── Cart ────────────────────────────────────────────────────────────────────
+
+model Cart {
+  id      String @id @default(cuid())
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  // Opaque value stored in the buyer's cookie
+  token   String @unique
+
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  email      String?
+  name       String?
+
+  couponId String?
+  coupon   Coupon? @relation(fields: [couponId], references: [id], onDelete: SetNull)
+
+  status         CartStatus @default(ACTIVE)
+  reminderSentAt DateTime?
+  convertedAt    DateTime?
+
+  items     CartItem[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([storeId, status, updatedAt])
+}
+
+model CartItem {
+  id        String  @id @default(cuid())
+  cartId    String
+  cart      Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity  Int     @default(1)
+  // Price captured at add-to-cart time; supports pay-what-you-want
+  unitPrice Float
+
+  @@unique([cartId, productId])
+}
+
+// ─── Orders & payments ───────────────────────────────────────────────────────
+
+model Order {
+  id          String @id @default(cuid())
+  orderNumber String @unique
+  storeId     String
+  store       Store  @relation(fields: [storeId], references: [id])
+
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  buyerEmail String
+  buyerName  String?
+
+  status   OrderStatus @default(PENDING)
+  currency String      @default("USD")
+
+  subtotal      Float @default(0)
+  discountTotal Float @default(0)
+  taxTotal      Float @default(0)
+  shippingTotal Float @default(0)
+  total         Float
+
+  couponId String?
+  coupon   Coupon? @relation(fields: [couponId], references: [id])
+
+  // Shipping address for physical goods (JSON: line1, line2, city, state, postal, country)
+  shippingAddress Json?
+
+  // Unguessable token so a guest can revisit their receipt / downloads
+  accessToken String @unique
+
+  paidAt     DateTime?
+  refundedAt DateTime?
+  notes      String?   @db.Text
+
+  items     OrderItem[]
+  payments  Payment[]
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@index([storeId, status, createdAt])
+  @@index([buyerEmail])
+}
+
+model OrderItem {
+  id        String  @id @default(cuid())
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  // Snapshot of the product name at purchase time
+  name      String  @default("")
+  quantity  Int
+  price     Float
+
+  downloads Download[]
+}
+
+model Payment {
+  id       String        @id @default(cuid())
+  orderId  String
+  order    Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  provider String // "stripe" | "paypal" | "mock"
+  // Provider-side identifier (Stripe session / PaymentIntent id)
+  providerRef String?
+  status      PaymentStatus @default(PENDING)
+  amount      Float
+  currency    String        @default("USD")
+  errorMessage String?      @db.Text
+  rawPayload  Json?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([providerRef])
+}
+
+// ─── Digital delivery ────────────────────────────────────────────────────────
+
+model Download {
+  id          String  @id @default(cuid())
+  orderItemId String
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  productFileId String?
+  productFile   ProductFile? @relation(fields: [productFileId], references: [id], onDelete: SetNull)
+  // Snapshot so the link keeps working if the file row is removed
+  fileUrl  String @db.Text
+  fileName String
+
+  token          String    @unique
+  downloadCount  Int       @default(0)
+  maxDownloads   Int?
+  expiresAt      DateTime?
+  lastDownloadAt DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([orderItemId])
+}
+
+// ─── Discounts ───────────────────────────────────────────────────────────────
+
+model Coupon {
+  id         String     @id @default(cuid())
+  storeId    String
+  store      Store      @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  code       String
+  discount   Float
+  type       CouponType
+  // Minimum cart subtotal required to apply
+  minSubtotal Float?
+  usageLimit Int?
+  usageCount Int        @default(0)
+  isActive   Boolean    @default(true)
+  expiresAt  DateTime?
+  orders     Order[]
+  carts      Cart[]
+  createdAt  DateTime   @default(now())
+
+  @@unique([storeId, code])
+}
+
+// ─── Async infrastructure ────────────────────────────────────────────────────
+
+/// Durable, DB-backed job queue. Replaces Redis/SQS for a single-node install;
+/// the same interface can be pointed at a real broker later.
+model Job {
+  id           String    @id @default(cuid())
+  type         String
+  payload      Json
+  status       JobStatus @default(PENDING)
+  attempts     Int       @default(0)
+  maxAttempts  Int       @default(3)
+  runAt        DateTime  @default(now())
+  lockedAt     DateTime?
+  lastError    String?   @db.Text
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([status, runAt])
+}
+
+/// Idempotency ledger for inbound payment-provider webhooks.
+model WebhookEvent {
+  id          String    @id @default(cuid())
+  provider    String
+  eventId     String
+  type        String
+  payload     Json
+  processedAt DateTime?
+  error       String?   @db.Text
+  createdAt   DateTime  @default(now())
+
+  @@unique([provider, eventId])
+}
+
+model EmailLog {
+  id       String      @id @default(cuid())
+  storeId  String?
+  to       String
+  subject  String
+  template String
+  status   EmailStatus @default(QUEUED)
+  error    String?     @db.Text
+  sentAt   DateTime?
+  createdAt DateTime   @default(now())
+
+  @@index([storeId, createdAt])
+}
+
+// ─── NextAuth required tables ────────────────────────────────────────────────
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
