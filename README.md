@@ -3,25 +3,6 @@
 A multi-tenant e-commerce SaaS: sellers sign up, get their own storefront at
 `/store/{slug}`, and sell digital downloads, physical goods or subscriptions.
 
-## Getting started
-
-```bash
-npm install
-npx prisma migrate deploy      # apply the schema to MySQL
-npx prisma generate
-npm run dev                    # http://localhost:3000
-```
-
-The dev and start scripts pin port 3000 on purpose. `AUTH_URL`, `NEXTAUTH_URL`
-and `APP_URL` in `.env.local` are absolute, so an app that silently moved to
-3001 would generate auth callbacks and payment redirects pointing at the wrong
-origin. Failing loudly on a busy port beats debugging that later.
-
-Copy `.env.local` and fill in what you need — every variable is documented in
-[docs/COMMERCE.md](docs/COMMERCE.md#environment-variables). With no payment or
-email keys set the app still runs end to end: checkout uses a built-in test
-gateway and emails print to the server log.
-
 ## Layout
 
 ```
