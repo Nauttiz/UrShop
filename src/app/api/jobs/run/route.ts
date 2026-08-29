@@ -8,8 +8,26 @@ import { enqueue, processJobs, requeueStalledJobs } from "@/lib/jobs/queue"
  * `curl` on a timer) to drain queued emails and sweep abandoned carts.
  *
  *   curl -X POST -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/jobs/run
+ *
+ * Draining a batch sends real emails, so the default serverless budget is too
+ * short for it. Vercel caps maxDuration per plan and ignores anything higher.
  */
+export const maxDuration = 60
+
 export async function POST(req: Request) {
+  return runWorker(req)
+}
+
+/**
+ * Vercel Cron invokes its targets with GET and supplies the CRON_SECRET as a
+ * bearer token itself, so the scheduled path and the manual curl share one
+ * implementation and one authorisation check.
+ */
+export async function GET(req: Request) {
+  return runWorker(req)
+}
+
+async function runWorker(req: Request) {
   const secret = process.env.CRON_SECRET
   // Without a secret, allow local runs only — an open worker endpoint in
   // production lets anyone drain the queue or force reminder emails.

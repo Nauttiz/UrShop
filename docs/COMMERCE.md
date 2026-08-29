@@ -71,9 +71,12 @@ stripe listen --forward-to localhost:3000/api/webhooks/stripe
 
 ## Digital delivery
 
-Product files live in `storage/products`, deliberately **outside `public/`**.
-Anything under `public/` is served by the static handler, so a paid file placed
-there could be downloaded by anyone who guessed the URL.
+Product files never sit anywhere a URL alone can reach. On disk that means
+`storage/products`, deliberately **outside `public/`** — anything under
+`public/` is served by the static handler, so a paid file placed there could be
+downloaded by anyone who guessed the URL. On Vercel it means `access: "private"`
+blobs, which are proxied back through our own route rather than redirected to,
+so the download budget still applies to every request.
 
 A paid order gets one `Download` row per file, each with an unguessable token, a
 download budget and an expiry. `/api/download/{token}` claims a use with a
@@ -154,7 +157,8 @@ fills in every default — existing stores with a `NULL` column keep working.
 | `ALLOW_MOCK_PAYMENTS` | dev only | Keeps the test gateway alive under `next start` |
 | `RESEND_API_KEY` | for real email | Otherwise emails print to the log |
 | `EMAIL_FROM` | with Resend | Sender address |
-| `CRON_SECRET` | in production | Authorises `POST /api/jobs/run` |
+| `CRON_SECRET` | in production | Authorises `/api/jobs/run` (GET and POST) |
+| `BLOB_READ_WRITE_TOKEN` | on Vercel | Switches file storage from local disk to Vercel Blob |
 | `PRIVATE_UPLOAD_DIR` | no | Overrides `storage/products` |
 
 ## Known limits
@@ -162,8 +166,11 @@ fills in every default — existing stores with a `NULL` column keep working.
 - Money is stored in `Float` columns inherited from the original schema.
   Calculations are done in integer cents, but the columns themselves should
   become `Decimal(10,2)` before this handles serious volume.
-- Files are stored on the local filesystem. Moving to S3 means implementing one
-  new storage driver behind `src/lib/storage.ts`; nothing else changes.
+- Storage has two drivers behind `src/lib/storage.ts`: local disk in
+  development, Vercel Blob when `BLOB_READ_WRITE_TOKEN` is set. Adding S3 means
+  one more class implementing the same interface. Download keys carry their own
+  prefix (`private:` vs `blob:`), so files uploaded before a switch keep working
+  after it.
 - `ProductType.SUBSCRIPTION` charges once at checkout. Recurring billing needs
   Stripe Subscriptions and a `subscription.*` webhook branch.
 - The job worker is pull-based. It needs an external timer (cron, Vercel Cron, a

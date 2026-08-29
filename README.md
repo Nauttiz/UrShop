@@ -64,3 +64,5 @@ curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
 
 - [docs/COMMERCE.md](docs/COMMERCE.md) — the purchase pipeline, payment
   gateways, digital delivery, jobs, email, settings, and known limits.
+- [docs/DEPLOY.md](docs/DEPLOY.md) — deploying to Vercel with managed MySQL and
+  Vercel Blob, including the environment-variable checklist.

@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server"
-import type { ReadStream } from "fs"
 import { checkDownloadAccess, consumeDownload, inspectDownload } from "@/lib/domain/delivery"
 import { isPrivateKey, openPrivateFile } from "@/lib/storage"
 
@@ -12,8 +11,12 @@ type Ctx = { params: Promise<{ token: string }> }
  * unexpired, and the download budget unspent. The counter is claimed before a
  * single byte is streamed so a cancelled transfer still costs a use — the
  * alternative lets a buyer replay the request indefinitely.
+ *
+ * The bytes are proxied rather than redirected to, even on Blob storage, so the
+ * download limit stays enforceable; handing out the underlying URL would let it
+ * be shared and re-fetched without ever passing through this check again.
  */
-export async function GET(_req: Request, { params }: Ctx) {
+export async function GET(req: Request, { params }: Ctx) {
   const { token } = await params
 
   const download = await inspectDownload(token)
@@ -36,9 +39,9 @@ export async function GET(_req: Request, { params }: Ctx) {
     )
   }
 
-  // Files uploaded before private storage existed still live under public/.
+  // Products can also point at an external URL the seller hosts themselves.
   if (!isPrivateKey(download.fileUrl)) {
-    return NextResponse.redirect(new URL(download.fileUrl, _req.url))
+    return NextResponse.redirect(new URL(download.fileUrl, req.url))
   }
 
   const file = await openPrivateFile(download.fileUrl)
@@ -46,28 +49,16 @@ export async function GET(_req: Request, { params }: Ctx) {
     return NextResponse.json({ error: "The file is no longer available" }, { status: 404 })
   }
 
-  const safeName = download.fileName.replace(/["\\\r\n]/g, "_")
+  const safeName = download.fileName.replace(/[\r\n"\\]/g, "_")
+  const headers: Record<string, string> = {
+    "Content-Type": "application/octet-stream",
+    "Content-Disposition": `attachment; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(download.fileName)}`,
+    "Cache-Control": "private, no-store",
+    "X-Content-Type-Options": "nosniff",
+  }
+  // Blob storage cannot always report a length up front. Omitting the header is
+  // correct; sending "null" would break the client's progress indicator.
+  if (file.size !== null) headers["Content-Length"] = String(file.size)
 
-  return new NextResponse(nodeStreamToWeb(file.stream), {
-    headers: {
-      "Content-Type": "application/octet-stream",
-      "Content-Length": String(file.size),
-      "Content-Disposition": `attachment; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(download.fileName)}`,
-      "Cache-Control": "private, no-store",
-      "X-Content-Type-Options": "nosniff",
-    },
-  })
-}
-
-function nodeStreamToWeb(stream: ReadStream): ReadableStream<Uint8Array> {
-  return new ReadableStream({
-    start(controller) {
-      stream.on("data", (chunk) => controller.enqueue(new Uint8Array(chunk as Buffer)))
-      stream.on("end", () => controller.close())
-      stream.on("error", (error) => controller.error(error))
-    },
-    cancel() {
-      stream.destroy()
-    },
-  })
+  return new NextResponse(file.stream, { headers })
 }
