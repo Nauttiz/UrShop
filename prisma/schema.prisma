@@ -104,6 +104,7 @@ model Store {
   coupons   Coupon[]
   carts     Cart[]
   customers Customer[]
+  visits    Visit[]
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 }
@@ -266,6 +267,14 @@ model Order {
   // Unguessable token so a guest can revisit their receipt / downloads
   accessToken String @unique
 
+  // Traffic attribution, stamped at checkout from the buyer's `sf_attr` cookie
+  // (last non-direct touch). Null for orders placed before tracking existed, or
+  // by buyers who block cookies.
+  visitSource    String? @db.VarChar(120)
+  visitMedium    String? @db.VarChar(24)
+  visitCampaign  String? @db.VarChar(120)
+  visitSessionId String? @db.VarChar(32)
+
   paidAt     DateTime?
   refundedAt DateTime?
   notes      String?   @db.Text
@@ -354,6 +363,54 @@ model Coupon {
   createdAt  DateTime   @default(now())
 
   @@unique([storeId, code])
+}
+
+// ─── Traffic analytics ───────────────────────────────────────────────────────
+
+/// One row per storefront *session*, written by the client-side beacon.
+///
+/// The grain is deliberately a session, not a pageview: the beacon fires on every
+/// navigation but the route short-circuits with no DB access while the session
+/// cookie is valid, so a twelve-page visit writes one row instead of twelve.
+///
+/// Append-only — never updated — so it stays cheap to write under load.
+model Visit {
+  id      String @id @default(cuid())
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  /// Opaque per-session id from the `sf_sid` cookie. Doubles as the dedupe key.
+  sessionId String @db.VarChar(32)
+  /// Opaque id stable across sessions (`sf_vid`). Retained for a future
+  /// unique-visitor metric; deliberately unindexed to keep writes cheap.
+  visitorId String @db.VarChar(32)
+
+  /// Date-only, computed in the STORE's timezone at write time. Grouping on a
+  /// DATE column keeps the per-day series an index-only scan with no
+  /// MySQL-specific DATE()/CONVERT_TZ() and no timezone maths at read time.
+  day DateTime @db.Date
+
+  /// Normalised lowercase key: "direct" | "google" | "acme.com".
+  source String @db.VarChar(120)
+  /// none | organic | referral | social | cpc | email
+  medium String @db.VarChar(24)
+
+  campaign     String? @db.VarChar(120)
+  /// Raw host, kept only to debug a mis-normalised source. Never grouped on.
+  referrerHost String? @db.VarChar(190)
+  landingPath  String  @db.VarChar(255)
+
+  createdAt DateTime @default(now())
+
+  // Idempotency, not a query index: makes the insert an INSERT IGNORE so a
+  // retried beacon, React StrictMode's double effect, or two tabs racing cannot
+  // double-count a session.
+  @@unique([storeId, sessionId])
+  // Serves both dashboard visit queries as a covering, index-only scan with no
+  // filesort: equality on storeId, range on day, and GROUP BY day satisfied by
+  // the index's own order. `day` must precede `source` — the date range is the
+  // selective predicate, and with `source` second it could not be a range scan.
+  @@index([storeId, day, source])
 }
 
 // ─── Async infrastructure ────────────────────────────────────────────────────

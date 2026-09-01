@@ -8,6 +8,7 @@ export type JobType =
   | "send_refund_email"
   | "scan_abandoned_carts"
   | "send_abandoned_cart"
+  | "prune_visits"
 
 export type EnqueueOptions = {
   /** Delay before the job becomes eligible to run. */

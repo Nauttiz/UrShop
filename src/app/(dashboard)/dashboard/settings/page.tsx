@@ -27,6 +27,45 @@ function nullableNumber(value: string): number | null {
   return Number.isFinite(n) ? n : null
 }
 
+/**
+ * The zones this runtime knows, with the store's current one guaranteed present.
+ *
+ * `Intl.supportedValuesOf` is the browser's own list, so it needs no bundled
+ * dataset and cannot drift from what day bucketing will actually accept. Older
+ * engines lack it, hence the short fallback — and the saved value is prepended
+ * either way so an unlisted zone is never silently reset on the next save.
+ */
+function timeZoneOptions(current: string): string[] {
+  let zones: string[] = FALLBACK_TIME_ZONES
+  try {
+    const supported = Intl.supportedValuesOf?.("timeZone")
+    if (supported && supported.length > 0) zones = supported
+  } catch {
+    // Keep the fallback.
+  }
+  // "UTC" is the app's default and is always offered, because some engines list
+  // only "Etc/UTC" — without this, a seller who switches away from UTC could
+  // never pick it again. The saved value is pinned for the same reason: an
+  // engine that does not list it must not silently reset it on the next save.
+  const pinned = ["UTC", current].filter((zone, i, all) => all.indexOf(zone) === i && !zones.includes(zone))
+  return pinned.length > 0 ? [...pinned, ...zones] : zones
+}
+
+const FALLBACK_TIME_ZONES = [
+  "UTC",
+  "America/Los_Angeles",
+  "America/New_York",
+  "Europe/London",
+  "Europe/Berlin",
+  "Asia/Dubai",
+  "Asia/Kolkata",
+  "Asia/Bangkok",
+  "Asia/Ho_Chi_Minh",
+  "Asia/Singapore",
+  "Asia/Tokyo",
+  "Australia/Sydney",
+]
+
 export default function StoreSettingsPage() {
   const [theme, setTheme] = useState<ThemeConfig>(DEFAULT_THEME)
   const [settings, setSettings] = useState<StoreSettings>(DEFAULT_STORE_SETTINGS)
@@ -349,6 +388,36 @@ export default function StoreSettingsPage() {
                   checked={settings.notifySellerOnOrder}
                   onChange={(v) => setSettings((s) => ({ ...s, notifySellerOnOrder: v }))}
                 />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Analytics</CardTitle>
+                <CardDescription>
+                  How the dashboard splits your traffic and sales into calendar days.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="timezone">Reporting timezone</Label>
+                  <select
+                    id="timezone"
+                    value={settings.timezone}
+                    onChange={(e) => setSettings((s) => ({ ...s, timezone: e.target.value }))}
+                    className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                  >
+                    {timeZoneOptions(settings.timezone).map((zone) => (
+                      <option key={zone} value={zone}>
+                        {zone.replace(/_/g, " ")}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    Applied when a visit is recorded, so changing it affects new data only —
+                    existing days are not re-bucketed.
+                  </p>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>

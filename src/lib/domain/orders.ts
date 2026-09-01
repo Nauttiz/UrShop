@@ -6,6 +6,7 @@ import { issueDownloadsForOrder } from "@/lib/domain/delivery"
 import { parseStoreSettings } from "@/lib/store-settings"
 import { enqueue } from "@/lib/jobs/queue"
 import type { CartWithItems } from "@/lib/domain/cart"
+import type { OrderAttribution } from "@/lib/analytics/attribution"
 
 const ORDER_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" // no I/O/0/1
 
@@ -33,6 +34,13 @@ export type CreateOrderInput = {
   buyerName?: string | null
   shippingAddress?: ShippingAddress | null
   notes?: string | null
+  /**
+   * Traffic source that earned this sale, read from the buyer's cookie by the
+   * checkout route. Stamped here rather than on payment because the cookie only
+   * exists in the buyer's own request — `markOrderPaid` runs from a provider
+   * webhook where there is no browser.
+   */
+  attribution?: OrderAttribution | null
 }
 
 export type CreateOrderResult =
@@ -137,6 +145,10 @@ export async function createOrderFromCart(input: CreateOrderInput): Promise<Crea
       shippingTotal: quote.shippingTotal,
       total: quote.total,
       couponId: quote.appliedCoupon?.id ?? null,
+      visitSource: input.attribution?.source ?? null,
+      visitMedium: input.attribution?.medium ?? null,
+      visitCampaign: input.attribution?.campaign ?? null,
+      visitSessionId: input.attribution?.sessionId ?? null,
       shippingAddress: (input.shippingAddress ?? undefined) as Prisma.InputJsonValue | undefined,
       notes: input.notes ?? null,
       items: {

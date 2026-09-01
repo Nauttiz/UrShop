@@ -2,6 +2,7 @@ import { notFound } from "next/navigation"
 import { prisma } from "@/lib/prisma"
 import { CartProvider } from "@/components/storefront/cart-provider"
 import { StoreNav } from "@/components/storefront/store-nav"
+import { VisitTracker } from "@/components/storefront/visit-tracker"
 import { APP_NAME } from "@/lib/brand"
 import { DEFAULT_THEME, type ThemeConfig } from "@/types"
 
@@ -24,6 +25,7 @@ export default async function StoreLayout({
 
   return (
     <CartProvider storeSlug={storeSlug}>
+      <VisitTracker storeSlug={storeSlug} />
       <div
         className="min-h-screen bg-gray-50"
         style={

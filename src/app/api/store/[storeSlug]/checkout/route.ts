@@ -3,6 +3,7 @@ import { PaymentStatus } from "@prisma/client"
 import { prisma } from "@/lib/prisma"
 import { findCart } from "@/lib/domain/cart"
 import { createOrderFromCart } from "@/lib/domain/orders"
+import { readAttribution } from "@/lib/analytics/attribution"
 import { defaultGateway } from "@/lib/payments"
 import { checkoutSchema } from "@/lib/validations"
 import { getBaseUrl } from "@/lib/urls"
@@ -53,6 +54,9 @@ export async function POST(req: Request, { params }: Ctx) {
     buyerName: parsed.data.name ?? null,
     shippingAddress: parsed.data.shippingAddress ?? null,
     notes: parsed.data.notes ?? null,
+    // A pure cookie read — no extra query, and a missing or corrupt cookie just
+    // leaves the order unattributed rather than failing the checkout.
+    attribution: await readAttribution(store.id),
   })
 
   if (!created.ok) {

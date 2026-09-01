@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client"
+import { isValidTimeZone } from "@/lib/analytics/dates"
 
 /**
  * Per-store commerce configuration, persisted in `Store.settings` (JSON).
@@ -21,6 +22,13 @@ export type StoreSettings = {
   sendReceiptEmail: boolean
   /** Notify the seller on every new paid order. */
   notifySellerOnOrder: boolean
+  /**
+   * IANA zone used to bucket analytics into calendar days.
+   *
+   * Applied when a visit is written, not when the dashboard reads, so changing
+   * it does not rewrite history — old rows keep the day they were recorded in.
+   */
+  timezone: string
 }
 
 export const DEFAULT_STORE_SETTINGS: StoreSettings = {
@@ -32,6 +40,7 @@ export const DEFAULT_STORE_SETTINGS: StoreSettings = {
   abandonedCartHours: 4,
   sendReceiptEmail: true,
   notifySellerOnOrder: true,
+  timezone: "UTC",
 }
 
 function num(value: unknown, fallback: number): number {
@@ -50,6 +59,12 @@ function bool(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback
 }
 
+/** Rejects a zone the runtime cannot resolve, so day bucketing never throws. */
+function timeZone(value: unknown, fallback: string): string {
+  if (typeof value !== "string" || value.length === 0) return fallback
+  return isValidTimeZone(value) ? value : fallback
+}
+
 /** Coerces the untyped JSON column into a fully-populated settings object. */
 export function parseStoreSettings(raw: Prisma.JsonValue | null | undefined): StoreSettings {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ...DEFAULT_STORE_SETTINGS }
@@ -64,5 +79,6 @@ export function parseStoreSettings(raw: Prisma.JsonValue | null | undefined): St
     abandonedCartHours: Math.max(1, num(r.abandonedCartHours, d.abandonedCartHours)),
     sendReceiptEmail: bool(r.sendReceiptEmail, d.sendReceiptEmail),
     notifySellerOnOrder: bool(r.notifySellerOnOrder, d.notifySellerOnOrder),
+    timezone: timeZone(r.timezone, d.timezone),
   }
 }

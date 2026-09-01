@@ -230,6 +230,51 @@ const sendAbandonedCart: JobHandler = async ({ cartId }: { cartId: string }) => 
   if (!result.ok) throw new Error(result.error ?? "Abandoned cart email failed")
 }
 
+/**
+ * Retention sweep for the analytics `Visit` table.
+ *
+ * Visits are the only append-only table in the schema that grows with traffic
+ * rather than with sales, so without a sweep it is the one table that can
+ * outgrow the database on a store that never sells anything. 400 days keeps a
+ * full year of history plus the year-on-year comparison, which is the longest
+ * window the dashboard can ask for.
+ *
+ * Deleted in batches with a hard cap on the number of batches: one unbounded
+ * `DELETE` over a year of rows would hold locks for the whole statement and
+ * blow the serverless time budget. Whatever is left is removed by the next
+ * tick, so the sweep is self-healing rather than all-or-nothing.
+ */
+const RETENTION_DAYS = 400
+const PRUNE_BATCH = 5_000
+const PRUNE_MAX_BATCHES = 20
+
+const pruneVisits: JobHandler = async () => {
+  const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 3600_000)
+  cutoff.setUTCHours(0, 0, 0, 0)
+
+  let removed = 0
+  for (let batch = 0; batch < PRUNE_MAX_BATCHES; batch++) {
+    // Prisma has no LIMIT on deleteMany, so the batch is selected first and
+    // deleted by primary key.
+    const doomed = await prisma.visit.findMany({
+      where: { day: { lt: cutoff } },
+      select: { id: true },
+      take: PRUNE_BATCH,
+    })
+    if (doomed.length === 0) break
+
+    const result = await prisma.visit.deleteMany({
+      where: { id: { in: doomed.map((v) => v.id) } },
+    })
+    removed += result.count
+    if (doomed.length < PRUNE_BATCH) break
+  }
+
+  if (removed > 0) {
+    console.log(`[jobs] prune_visits removed ${removed} visits older than ${RETENTION_DAYS} days`)
+  }
+}
+
 export const jobHandlers: Record<string, JobHandler> = {
   send_receipt: sendReceipt,
   send_delivery: sendDelivery,
@@ -237,4 +282,5 @@ export const jobHandlers: Record<string, JobHandler> = {
   send_refund_email: sendRefundEmail,
   scan_abandoned_carts: scanAbandonedCarts,
   send_abandoned_cart: sendAbandonedCart,
+  prune_visits: pruneVisits,
 }

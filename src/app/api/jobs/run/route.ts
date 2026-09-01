@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import crypto from "crypto"
+import { prisma } from "@/lib/prisma"
 import { jobHandlers } from "@/lib/jobs/handlers"
 import { enqueue, processJobs, requeueStalledJobs } from "@/lib/jobs/queue"
 
@@ -49,9 +50,27 @@ async function runWorker(req: Request) {
     await enqueue("scan_abandoned_carts", {})
   }
 
+  // Retention is a daily concern, but this endpoint may tick every few minutes.
+  // Queueing one per tick would bury the real work under no-op jobs, so it is
+  // enqueued at most once every 12 hours.
+  const pruned = await enqueueDailyPrune()
+
   const result = await processJobs(jobHandlers, Number(url.searchParams.get("limit") ?? 25))
 
-  return NextResponse.json({ requeued, ...result })
+  return NextResponse.json({ requeued, prunedEnqueued: pruned, ...result })
+}
+
+const PRUNE_INTERVAL_MS = 12 * 3600_000
+
+async function enqueueDailyPrune(): Promise<boolean> {
+  const recent = await prisma.job.findFirst({
+    where: { type: "prune_visits", createdAt: { gte: new Date(Date.now() - PRUNE_INTERVAL_MS) } },
+    select: { id: true },
+  })
+  if (recent) return false
+
+  await enqueue("prune_visits", {})
+  return true
 }
 
 function authorised(req: Request, secret: string): boolean {

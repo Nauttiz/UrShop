@@ -107,6 +107,20 @@ export const checkoutSchema = z.object({
   notes: z.string().max(500).optional().nullable(),
 })
 
+/**
+ * Payload of the storefront visit beacon.
+ *
+ * Everything here is attacker-controlled, so lengths are capped before the
+ * values reach the normaliser. A failure is answered with 204, never 400 — a
+ * broken beacon must not print errors in a buyer's console.
+ */
+export const visitBeaconSchema = z.object({
+  /** Path + query the visitor landed on. */
+  path: z.string().max(1000).default("/"),
+  /** `document.referrer`, empty string when there is none. */
+  referrer: z.string().max(1000).optional().nullable(),
+})
+
 export const storeSettingsSchema = z.object({
   taxRate: z.coerce.number().min(0).max(100).default(0),
   flatShipping: z.coerce.number().min(0).default(0),
@@ -116,6 +130,7 @@ export const storeSettingsSchema = z.object({
   abandonedCartHours: z.coerce.number().int().min(1).max(168).default(4),
   sendReceiptEmail: z.boolean().default(true),
   notifySellerOnOrder: z.boolean().default(true),
+  timezone: z.string().max(64).default("UTC"),
 })
 
 export const storeProfileSchema = z.object({
